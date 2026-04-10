@@ -50,7 +50,9 @@ function buildConfirmationMessage(data) {
 function mergeData(existing, incoming) {
   const merged = { ...existing };
   for (const [key, value] of Object.entries(incoming)) {
-    if (value && value.trim() !== '' && (!merged[key] || merged[key] === '')) {
+    // Overwrite existing data if the AI extracted a non-empty value.
+    // This allows users to correctly "EDIT" previous mistakes.
+    if (value && typeof value === 'string' && value.trim() !== '') {
       merged[key] = value.trim();
     }
   }
@@ -127,7 +129,7 @@ async function handleMessage(msg, sendMessage) {
     // Re-read state after history update
     state = getState(phone);
 
-    const aiResult = await processMessage(text, state.history.slice(0, -1), phone);
+    const aiResult = await processMessage(text, state.history.slice(0, -1), phone, state.data);
 
     // Merge any newly extracted data
     if (aiResult.data) {

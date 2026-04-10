@@ -55,13 +55,24 @@ function getGroqClient() {
 }
 
 // ── System prompt ────────────────────────────────────────────
-function buildSystemPrompt() {
+function buildSystemPrompt(currentData = {}) {
   const services = SERVICES_OFFERED.join(', ');
   const fieldList = Object.entries(FIELD_LABELS)
     .map(([k, v]) => `"${k}": "${v}"`)
     .join(', ');
 
+  const currentDataStr = JSON.stringify(currentData, null, 2);
+
   return `You are a helpful, friendly customer support assistant for an electronics repair service in India.
+
+==== CURRENT KNOWN DATA ====
+The following information has ALREADY been collected:
+${currentDataStr}
+============================
+
+Your primary job is to generate a JSON response that UPDATES this data based on the latest conversation.
+- IMPORTANT: ALWAYS retain the existing known data! DO NOT output empty strings for fields that were already collected (like 'complaint' or 'details'), unless the user explicitly told you to delete them.
+- NEVER replace a detailed complaint with a vague one like "not working"!!! If the user previously gave a specific complaint, KEEP IT EXACTLY.
 
 Services offered: ${services}
 
@@ -76,11 +87,13 @@ REQUIRED LEAD FIELDS: ${fieldList}
 IMPORTANT RULES:
 - DO NOT ask for the user's phone number! We already have it from their WhatsApp account. Keep "phone" empty.
 - If the customer does not have a company, store it as "N/A" or "Individual".
-- "model" and "details" are OPTIONAL. If the customer does not know their device model or has no extra details, gently accept that and store "Unknown" or "None".
+- "details" is OPTIONAL. If the customer has no extra details, gently accept that and store "None".
+- The "model" is MANDATORY. Ask the user for their device's brand/model name. If they absolutely do not know it, accept "Unknown".
 - NEVER make up or guess data.
 - Only set isEnquiry=true when the customer is clearly asking for a repair service.
-- If mandatory fields are missing, include them in "missingFields". Ask for them politely and naturally in "reply" (preferably 1 or 2 at a time).
-- Do not jump to confirmation until you have collected ALL of the following mandatory fields: name, company, address, device, and complaint.
+- **CRITICAL: Ask for missing information EXACTLY like a real human would. NEVER list out all the things you need at once. Ask for exactly ONE missing detail at a time naturally in your "reply", and wait for the user to answer before asking for the next one.**
+- **CRITICAL: If the customer corrects or changes previous information (e.g., "Actually my address is XYZ" or "Change the device to a laptop"), MUST update that specific field in your JSON "data" output to the new value.**
+- Do not jump to confirmation until you have collected ALL of the following mandatory fields: name, company, address, device, model, and complaint.
 - DO NOT include confirmation text unless you are truly ready to confirm.
 
 YOU MUST ALWAYS RESPOND WITH RAW JSON ONLY (no markdown, no prose, no triple backticks):
@@ -139,21 +152,21 @@ function buildMessages(history, newUserMessage) {
 }
 
 // ── Claude implementation ────────────────────────────────────
-async function callClaude(messages) {
+async function callClaude(messages, currentData) {
   const client = getAnthropicClient();
   const response = await client.messages.create({
     model: process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022',
     max_tokens: 1024,
-    system: buildSystemPrompt(),
+    system: buildSystemPrompt(currentData),
     messages,
   });
   return response.content[0].text;
 }
 
 // ── OpenAI implementation ────────────────────────────────────
-async function callOpenAI(messages) {
+async function callOpenAI(messages, currentData) {
   const client = getOpenAIClient();
-  const systemMessage = { role: 'system', content: buildSystemPrompt() };
+  const systemMessage = { role: 'system', content: buildSystemPrompt(currentData) };
   const response = await client.chat.completions.create({
     model: process.env.OPENAI_MODEL || 'gpt-4o',
     messages: [systemMessage, ...messages],
@@ -164,9 +177,9 @@ async function callOpenAI(messages) {
 }
 
 // ── Groq implementation ──────────────────────────────────────
-async function callGroq(messages) {
+async function callGroq(messages, currentData) {
   const client = getGroqClient();
-  const systemMessage = { role: 'system', content: buildSystemPrompt() };
+  const systemMessage = { role: 'system', content: buildSystemPrompt(currentData) };
   const response = await client.chat.completions.create({
     model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
     messages: [systemMessage, ...messages],
@@ -183,9 +196,10 @@ async function callGroq(messages) {
  * @param {string} userMessage — raw text from WhatsApp
  * @param {Array}  history     — prior conversation turns [{role, content}]
  * @param {string} phone       — sender ID for logging
+ * @param {object} currentData — current state data to maintain context
  * @returns {Promise<AiResult>}
  */
-async function processMessage(userMessage, history, phone) {
+async function processMessage(userMessage, history, phone, currentData = {}) {
   const messages = buildMessages(history, userMessage);
   const provider = (process.env.AI_PROVIDER || 'groq').toLowerCase();
 
@@ -193,11 +207,11 @@ async function processMessage(userMessage, history, phone) {
 
   let rawText;
   if (provider === 'openai') {
-    rawText = await callOpenAI(messages);
+    rawText = await callOpenAI(messages, currentData);
   } else if (provider === 'groq') {
-    rawText = await callGroq(messages);
+    rawText = await callGroq(messages, currentData);
   } else {
-    rawText = await callClaude(messages);
+    rawText = await callClaude(messages, currentData);
   }
 
   logger.debug(`[AI] Raw response for ${phone}: ${rawText.slice(0, 200)}...`);

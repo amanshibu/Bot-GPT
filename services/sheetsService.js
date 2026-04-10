@@ -57,9 +57,9 @@ async function ensureHeaders() {
 }
 
 // ── Map lead data to a row array (column order matters!) ─────
-function buildRow(data, phone) {
+function buildRow(data, phone, seqId) {
   const now = new Date();
-  const id = now.getTime().toString();
+  const id = seqId || now.getTime().toString();
   const date = now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
   return SHEET_COLUMNS.map((col) => {
@@ -96,13 +96,24 @@ async function appendLead(data, phone) {
 
   await ensureHeaders();
 
-  const row = buildRow(data, phone);
-
-  await sheets.spreadsheets.values.append({
+  // Find the next empty row by checking the length of Column A
+  const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${tab}!A:Z`,
-    valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
+    range: `${tab}!A:A`,
+  });
+
+  const idColValues = res.data.values || [];
+  const nextEmptyRowNumber = idColValues.length + 1;
+  const nextId = idColValues.length; // If only header exists, id is 1
+
+  const row = buildRow(data, phone, nextId.toString());
+
+  // Use update instead of append. Append with INSERT_ROWS pushes pre-formatted rows down.
+  // Update explicitly targets the next empty row, preserving your manual dropdowns!
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${tab}!A${nextEmptyRowNumber}:Z${nextEmptyRowNumber}`,
+    valueInputOption: 'RAW', // Writes strictly as normal text form
     requestBody: { values: [row] },
   });
 

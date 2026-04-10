@@ -43,7 +43,7 @@ function sanitizeData(obj) {
  * @returns {boolean}
  */
 function hasMandatoryFields(data) {
-  const mandatory = ['name', 'company', 'address', 'device', 'complaint'];
+  const mandatory = ['name', 'company', 'address', 'device', 'model', 'complaint'];
   return mandatory.every((f) => data[f] && data[f].trim() !== '');
 }
 
